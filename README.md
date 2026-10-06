@@ -39,10 +39,10 @@ The left door/light panel starts off-screen, as in the original. Look left to re
 
 | Original role | Replacement | Preserved behaviour | Assets |
 |---|---|---|---|
-| **Freddy** | **P. Diddy** | Starts on stage and moves only after both others have left. Moves in a fixed pattern every 17 s: stage → VIP Lounge → Restrooms → East Hall → East Hall Corner, then shuffles between the last two. Attacks only if, on his move, he's in the corner, the **monitor is up** and the **right door is open**. The jumpscare waits until you lower the monitor. He also appears in the power outage. | `characters/diddy.jpg` |
-| **Bonnie** | **Jay-Z** | Fastest, every 10 s. Random advance along the west route: stage → Lounge → Green Room → West Hall → Gear Closet → West Corner → **left door**. Never retreats: once at the door he waits there. Attacks if, on his move, the **monitor is up** and the **left door is open**. Seen with the **left light**. | `characters/jayz.png` |
-| **Chica** | **Biggie** | Every 13 s, same random rule as Jay-Z on the east route: stage → Lounge → Restrooms → East Hall → East Corner → **right door**. Same attack rule with the right door. Seen with the **right light**. | `characters/biggie.jpg` |
-| **Foxy** | **Kanye** | Every 19 s he advances one stage behind the **Vinyl Vault** curtain, unless you're watching that camera at that moment (watching freezes him). At stage 3 the Vault is empty. On his next move he attacks the **left door**: closed means he bangs on it and resets, open means an instant jumpscare. Watching the West Hall at stage 3 shows him sprinting at the camera; the monitor drops and you have 0.5 s for the door to be shut. | `characters/kanye.jpg` (public-domain photo, Wikimedia Commons, by David Shankbone) |
+| **Freddy** | **P. Diddy** | Starts on stage and moves only after both others have left. Moves in a fixed pattern every 17 s: stage → VIP Lounge → Restrooms → East Hall → East Hall Corner, then shuffles between the last two. Attacks only if, on his move, he's in the corner, the **monitor is up** and the **right door is open**. The jumpscare waits until you lower the monitor. He also appears in the power outage. | `diddy.jpg` (main), `diddy_full.jpg` (distant sightings, power outage), `diddy_side.jpg` (East Hall Corner), `diddy_snarl.jpg` (jumpscare) |
+| **Bonnie** | **Jay-Z** | Fastest, every 10 s. Random advance along the west route: stage → Lounge → Green Room → West Hall → Gear Closet → West Corner → **left door**. Never retreats: once at the door he waits there. Attacks if, on his move, the **monitor is up** and the **left door is open**. Seen with the **left light**. | `jayz.png` (main), `jayz_full.jpg` (distant sightings), `jayz_laugh.jpg` (Gear Closet, jumpscare) |
+| **Chica** | **Biggie** | Every 13 s, same random rule as Jay-Z on the east route: stage → Lounge → Restrooms → East Hall → East Corner → **right door**. Same attack rule with the right door. Seen with the **right light**. | `biggie.jpg` (mirrored or tilted for variety; no freely licensed Biggie photos exist on Wikimedia Commons) |
+| **Foxy** | **Kanye** | Every 19 s he advances one stage behind the **Vinyl Vault** curtain, unless you're watching that camera at that moment (watching freezes him). At stage 3 the Vault is empty. On his next move he attacks the **left door**: closed means he bangs on it and resets, open means an instant jumpscare. Watching the West Hall at stage 3 shows him sprinting at the camera; the monitor drops and you have 0.5 s for the door to be shut. | `kanye.jpg` (main), `kanye_profile.jpg` (peeking through the curtain), `kanye_full.jpg` (out of the Vault), `kanye_shades.jpg` (sprint, jumpscare) |
 
 ## Rules reference: original vs remix
 
@@ -103,6 +103,10 @@ Every file the game uses, and every character placement, is listed in **`assets/
 - `eyes`: points for the glowing-eye effect. `face = x,y w,h`: the crop used for jumpscares and close-ups.
 - `grade = saturation red green blue contrast`: colour match to the rooms.
 
+**Switch which photo a spot uses:** each placement names its photo first (`place.lounge.diddy = diddy_full ...`). `jumpscare.<id>` picks the jumpscare photo and `menu.twitch` the menu flash photo.
+
+**Signs, posters and plaques** (`sign.<name>` lines) are drawn in code over the original pizzeria signage: `room x y w h rotation style [b=brightness] [faces=ids] | text | text`. Styles are `poster`, `paper`, `board`, `banner`, `plaque_gold` and `plaque_platinum`. **Text lines** (`text.intro.N`, `text.win.N`, `text.lose.N`, `text.paycheck.memo`) set the night-card session, the 6 AM line and the Game Over lines.
+
 **Move or resize a character in a room:** edit its `place.<room>.<state>` line:
 `x=` / `y=` bottom-centre anchor in room pixels (rooms are 1600×720), `h=` height, `b=` brightness, `a=` opacity, `crop=` part of the photo, `rot=` tilt, `fade=` bottom dissolve, `shade=` top-to-bottom darkening, `glow=1` eye glints, `flip=1` mirror, `z=` layer order, `occ=` rectangles of the room redrawn in front (doorframes, curtains).
 
@@ -115,17 +119,30 @@ Use `./run.sh` to see changes immediately; run `./build.sh` to update the JAR. A
 | Office (normal, left light, right light, dark) | `rooms/office*.png` | Original game |
 | 10 camera rooms | `rooms/stage, lounge, green_room, vault_closed, vault_open, restrooms, gear_closet, west_hall, west_corner, east_hall, east_corner .png` | Original game (empty-room versions, no animatronics) |
 | Doors, door/light buttons, monitor bar, map, camera labels, static, usage bars | `ui/*.png` | Original game |
-| Characters | `characters/diddy.jpg, jayz.png, biggie.jpg, kanye.jpg` | Your three photos and the public-domain Kanye photo |
-| Studio poster, help-wanted flyer, paycheck ending | drawn in code (`Renderer`) | New |
+| Characters | `characters/*.jpg/png`: 12 photos | Your three photos, plus nine Wikimedia Commons photos (credited in [CREDITS.md](CREDITS.md)) |
+| Studio signage (see below) and the help-wanted flyer / paycheck ending | drawn in code from the manifest | New |
 | Ambience, menu music, light buzz, door, knock, sprint, scream, camera blip, static | `audio/*.wav` | Original game |
 | **Power-down cue, 6 AM chime** | `audio/power_down.wav`, `audio/chime_6am.wav` | **Placeholders** generated by `tools/MakeAssets.java`. Replace with real sounds |
 
+## Studio dressing
+
+The original pizzeria signage is covered by studio signage drawn from the artists' real music careers, all editable in the manifest:
+- **Office:** the "Diddy's Platinum Studios" poster with all four acts and their labels (Bad Boy, Def Jam, Roc-A-Fella, G.O.O.D. Music), replacing "CELEBRATE!". Platinum and gold record plaques (*No Way Out*, *Reasonable Doubt*, *Juicy*) replace the children's drawings.
+- **Cameras:**
+  - *Watch the Throne* tour poster (W. Hall Corner, replacing the "Let's Party" poster)
+  - Studio policy notice (E. Hall Corner, replacing "Rules for Safety")
+  - Bad Boy Records banner (VIP Lounge)
+  - "Session in progress" and "Runaway" boards (Vinyl Vault)
+  - "Talent only" (Green Room)
+  - "Out of order" (Restrooms)
+- **Nights 2–5:** the intro card names the night's session after a song (Hypnotize, Run This Town, Can't Nobody Hold Me Down, Watch the Throne).
+
 ## Still not final
 
-- **Room art is still the original pizzeria art.** The venue reskin comes from room names, the studio poster over the "CELEBRATE!" poster, the flyer, text and colour grading. Pizza signs, party hats, a "LET'S PARTY" Freddy poster (West Hall Corner), a Chica mask (Green Room) and the "Rules for Safety" poster are still visible. A full music-venue look needs new room renders.
+- **Room art is still the original pizzeria renders.** The signage is replaced, but the pizza wall décor, party hats, checkered floors and the Green Room's animatronic heads remain. A full music-venue look needs new room renders.
 - **Two placeholder sounds** (power-down and 6 AM chime) need replacing.
-- One photo per character: distance, close and jumpscare looks are crops, brightness and tilt of the same photo. More poses would make close encounters stronger.
-- **Distribution:** the room/UI art and sounds belong to the original FNAF creator, and the Diddy/Jay-Z/Biggie photos are press photos of unknown licence. Treat this as a personal, non-commercial project and keep any repository private.
+- Biggie still has only one photo (mirrored and tilted for variety), because no freely licensed photos of him exist. Jay-Z's extra photos show short hair, while the main photo has locs.
+- **Distribution:** the room/UI art and sounds belong to the original FNAF creator, and your three original photos are press photos of unknown licence. The Commons photos need the credits in CREDITS.md. Treat this as a personal, non-commercial project and keep any repository private.
 
 ## Test report
 
@@ -133,7 +150,7 @@ Use `./run.sh` to see changes immediately; run `./build.sh` to update the JAR. A
 |---|---|---|
 | Compilation | `javac --release 11 -Xlint:all` on all sources | Clean (two harmless serialVersionUID warnings) |
 | Automated rule checks (`./test.sh`) | 102 distinct checks. **Night 5 is compared tick-by-tick with a literal copy of the original enemy code** (60 seeds, same random numbers, scripted player); a deliberately broken rule was confirmed to fail it. Also covered: clock and 6 AM, the power table and drain totals, single outage, legal moves over 200 random nights (all five nights), every door/countermeasure, Diddy's retreat, Kanye freeze/knock/sprint (including the two fixes), pending attack vs 6 AM, jumpscare freezing the night, monitor lockout, full restart reset, pause/focus loss, office hitboxes at every pan position, save round-trip and damaged saves, and the full five-night campaign/continue/new-game flow | All pass |
-| Visual inspection | 49 headless renders of every screen, every camera with each occupant, the sprint, all four jumpscares, the outage, defeat, victory and ending. Reviewed and fixed (cutout edges, eye glow, poster position, doorframe overlap) | Reviewed |
+| Visual inspection | 56 headless renders, including every new pose and sign. Fixes made: sign positions, pose framing, occluders now keep signs in front, and the plaque text balance. Earlier: 49 headless renders of every screen, every camera with each occupant, the sprint, all four jumpscares, the outage, defeat, victory and ending. Reviewed and fixed (cutout edges, eye glow, poster position, doorframe overlap) | Reviewed |
 | Runtime, real window | `java -jar` launch with no errors or warnings. A dev-only smoke test (`java -Ddiddys.dev=true -Ddiddys.smoke=DIR -cp build/classes:assets diddys.Main`) drove the live window with real Swing mouse/key events at 1600×844, 900×732 and 1280×732: New Game, intro skip, office pan, door/light clicks, A/D/Q/E, monitor hover, map clicks after resizing, Space, Esc pause/resume, minimise → auto-pause with no time jump, mute, a Jay-Z attack → jumpscare → static → Game Over → Retry. It captured what the window painted at each size (letterboxing correct) | 25/25 pass. Clock measured at 102 ticks/s (target 100) |
 | Balance probe | A simple bot that only uses visible information (`BalanceBot`), 400 nights each | Win rate 79 / 59 / 48 / 44 / 32 % for Nights 1–5, usually finishing with 2–9 % power |
 | **Not done** | **No human has played a full night yet.** I couldn't see or hear the live window (macOS blocked screen capture), so pacing, scare effectiveness, audio levels and mix are **unverified by ear and eye**. Not tested on Windows or Linux | Please play a night or two and report anything off |
