@@ -80,7 +80,11 @@ final class Save {
             try (OutputStream out = Files.newOutputStream(tmp)) {
                 p.store(out, "Five Nights at Diddy's");
             }
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            try {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING); // e.g. the browser's storage
+            }
         } catch (IOException e) {
             System.err.println("Could not save progress: " + e);
         }

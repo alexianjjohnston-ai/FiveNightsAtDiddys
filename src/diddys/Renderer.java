@@ -36,16 +36,24 @@ final class Renderer {
     private final Map<String, List<Assets.Sign>> signsByRoom = new HashMap<>();
     private final Map<Assets.Sign, BufferedImage> signArt = new HashMap<>();
 
+    /** Needs only the menu essentials; call prepare() once everything else has loaded. */
     Renderer(Assets a) {
         this.a = a;
         for (int i = 0; i < 8; i++) statics[i] = a.img("static_" + (i + 1));
         scanlines = makeScanlines();
         vignette = makeVignette();
+    }
+
+    /** Draws the signs and pre-builds every cutout, so gameplay never processes images. Any thread. */
+    Renderer prepare() {
+        Map<String, List<Assets.Sign>> byRoom = new HashMap<>();
         for (Assets.Sign sg : a.signs) {
-            signsByRoom.computeIfAbsent(sg.room, k -> new ArrayList<>()).add(sg);
+            byRoom.computeIfAbsent(sg.room, k -> new ArrayList<>()).add(sg);
             signArt.put(sg, renderSign(sg));
         }
         warmCutouts();
+        signsByRoom.putAll(byRoom); // published last; Game only shows rooms after the loader reports ready
+        return this;
     }
 
     /** Builds every cutout variant up front so the first sighting or jumpscare never stalls a frame. */
@@ -497,7 +505,9 @@ final class Renderer {
     }
 
     private void intro(Graphics2D g, Game game) {
-        int t = game.screenTicks;
+        boolean waiting = !game.assetsReady && game.screenTicks > Config.INTRO_TICKS - 60;
+        int t = waiting ? Config.INTRO_TICKS - 60 : game.screenTicks; // hold the card while loading finishes
+        if (waiting) center(g, F_SMALL, "Loading" + ".".repeat(1 + (game.screenTicks / 40) % 3), 560, new Color(150, 150, 150));
         float fadeIn = Math.min(1, t / 60f), fadeOut = Math.min(1, (Config.INTRO_TICKS - t) / 60f);
         float alpha = Math.max(0, Math.min(fadeIn, fadeOut));
         Composite c = g.getComposite();
@@ -810,11 +820,13 @@ final class Renderer {
         }
         g.dispose();
         if (sg.bright < 1) {
-            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
-                int px = b.getRGB(x, y);
-                int r = (int) (((px >> 16) & 255) * sg.bright), gg = (int) (((px >> 8) & 255) * sg.bright), bl = (int) ((px & 255) * sg.bright);
-                b.setRGB(x, y, (px & 0xFF000000) | (r << 16) | (gg << 8) | bl);
+            int[] px = b.getRGB(0, 0, w, h, null, 0, w);
+            for (int i = 0; i < px.length; i++) {
+                int p = px[i];
+                px[i] = (p & 0xFF000000) | ((int) (((p >> 16) & 255) * sg.bright) << 16)
+                        | ((int) (((p >> 8) & 255) * sg.bright) << 8) | (int) ((p & 255) * sg.bright);
             }
+            b.setRGB(0, 0, w, h, px, 0, w);
         }
         return b;
     }

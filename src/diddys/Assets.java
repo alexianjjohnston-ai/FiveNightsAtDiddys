@@ -9,22 +9,31 @@ import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import javax.imageio.ImageIO;
 
 /**
- * Loads everything named in assets/manifest.properties once at startup. Rooms and UI images are
- * critical (a missing one aborts with a readable message); character photos fall back to a labelled
- * placeholder silhouette; sounds are optional (see Audio).
+ * Loads everything named in assets/manifest.properties. Rooms and UI images are critical (a missing one
+ * aborts with a readable message); character photos fall back to a labelled placeholder silhouette;
+ * sounds are optional (see Audio).
+ *
+ * Loading is split so the menu can appear first: open() reads the manifest and checks every required
+ * file exists, loadEssentials() decodes what the menu needs, loadRest() the rest (Main runs it on a
+ * background thread). Pixel work uses bulk int arrays because per-pixel getRGB/setRGB calls are slow,
+ * badly so in the browser build.
  */
 final class Assets {
     static final class MissingAssets extends Exception {
@@ -37,7 +46,7 @@ final class Assets {
         final double[][] eyes;
         final Rectangle face;
         final boolean placeholder;
-        private final Map<String, BufferedImage> cache = new HashMap<>();
+        private final Map<String, BufferedImage> cache = new ConcurrentHashMap<>();
 
         Cutout(BufferedImage img, double[][] eyes, Rectangle face, boolean placeholder) {
             this.img = img;
@@ -53,27 +62,31 @@ final class Assets {
         BufferedImage variant(Rectangle crop, double bright, double fade, double shade) {
             String k = crop + "|" + bright + "|" + fade + "|" + shade;
             return cache.computeIfAbsent(k, kk -> {
-                BufferedImage out = new BufferedImage(crop.width, crop.height, BufferedImage.TYPE_INT_ARGB);
-                double edge = Math.max(4, crop.width * 0.07);
-                for (int y = 0; y < crop.height; y++) {
-                    double fy = y / (double) crop.height;
-                    double fa = smooth(fade <= 0 ? 1 : (crop.height - 1 - y) / (fade * crop.height))
-                            * smooth(y / (edge * 0.5));
+                int w = crop.width, h = crop.height, iw = img.getWidth(), ih = img.getHeight();
+                int[] src = pixels(img), out = new int[w * h];
+                double edge = Math.max(4, w * 0.07);
+                double[] side = new double[w];
+                for (int x = 0; x < w; x++) side[x] = smooth(Math.min(x, w - 1 - x) / edge);
+                for (int y = 0; y < h; y++) {
+                    int sy = crop.y + y;
+                    if (sy < 0 || sy >= ih) continue;
+                    double fy = y / (double) h;
+                    double fa = smooth(fade <= 0 ? 1 : (h - 1 - y) / (fade * h)) * smooth(y / (edge * 0.5));
                     double lit = bright * (1 - shade * Math.pow(fy, 1.4));
-                    for (int x = 0; x < crop.width; x++) {
-                        int sx = crop.x + x, sy = crop.y + y;
-                        if (sx < 0 || sy < 0 || sx >= img.getWidth() || sy >= img.getHeight()) continue;
-                        int p = img.getRGB(sx, sy);
-                        double side = smooth(Math.min(x, crop.width - 1 - x) / edge);
-                        int a = (int) (((p >>> 24) & 255) * fa * side);
-                        double l = lit * (0.82 + 0.18 * side);
-                        int r = clamp((int) (((p >> 16) & 255) * l));
-                        int g = clamp((int) (((p >> 8) & 255) * l));
-                        int b = clamp((int) ((p & 255) * l));
-                        out.setRGB(x, y, (a << 24) | (r << 16) | (g << 8) | b);
+                    for (int x = 0; x < w; x++) {
+                        int sx = crop.x + x;
+                        if (sx < 0 || sx >= iw) continue;
+                        int p = src[sy * iw + sx];
+                        int a = (int) (((p >>> 24) & 255) * fa * side[x]);
+                        if (a == 0) continue;
+                        double l = lit * (0.82 + 0.18 * side[x]);
+                        out[y * w + x] = (a << 24) | (clamp((int) (((p >> 16) & 255) * l)) << 16)
+                                | (clamp((int) (((p >> 8) & 255) * l)) << 8) | clamp((int) ((p & 255) * l));
                     }
                 }
-                return out;
+                BufferedImage o = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+                o.setRGB(0, 0, w, h, out, 0, w);
+                return o;
             });
         }
 
@@ -115,13 +128,22 @@ final class Assets {
     }
 
     private final Properties manifest = new Properties();
-    private final Map<String, BufferedImage> images = new HashMap<>();
-    private final Map<String, Cutout> characters = new HashMap<>();
+    private final Map<String, BufferedImage> images = new ConcurrentHashMap<>();
+    private final Map<String, Cutout> characters = new ConcurrentHashMap<>();
     private final Map<String, Placement> placements = new HashMap<>();
     final List<Sign> signs = new ArrayList<>();
-    final List<String> warnings = new ArrayList<>();
+    final List<String> warnings = Collections.synchronizedList(new ArrayList<>());
 
+    /** Everything at once (tools and tests). */
     static Assets load() throws MissingAssets {
+        Assets a = open();
+        a.loadEssentials();
+        a.loadRest();
+        return a;
+    }
+
+    /** Reads the manifest, parses placements and signs, and fails early if any required image is missing. */
+    static Assets open() throws MissingAssets {
         Assets a = new Assets();
         try (InputStream in = Assets.class.getResourceAsStream("/manifest.properties")) {
             if (in == null) throw new MissingAssets("assets/manifest.properties was not found on the classpath.");
@@ -131,27 +153,48 @@ final class Assets {
         }
         List<String> missing = new ArrayList<>();
         for (String k : a.manifest.stringPropertyNames()) {
-            if (k.startsWith("img.")) a.loadImage(k.substring(4), a.manifest.getProperty(k), missing);
-        }
-        if (!missing.isEmpty()) {
-            throw new MissingAssets("These required files are missing or unreadable in the assets folder:\n  "
-                    + String.join("\n  ", missing));
-        }
-        for (String k : a.manifest.stringPropertyNames()) {
-            if (k.startsWith("char.") && k.endsWith(".file")) {
-                String id = k.substring(5, k.length() - 5);
-                a.characters.put(id, a.loadCharacter(id));
+            if (k.startsWith("img.")) {
+                String file = a.manifest.getProperty(k).trim().split("\\s+")[0];
+                if (Assets.class.getResource("/" + file) == null) missing.add(file + "   (" + k + ")");
             }
             if (k.startsWith("place.")) a.placements.put(k.substring(6), a.parsePlacement(k, a.manifest.getProperty(k)));
             if (k.startsWith("sign.")) a.signs.add(a.parseSign(k, a.manifest.getProperty(k)));
         }
         a.signs.removeIf(x -> x == null);
+        if (!missing.isEmpty()) {
+            throw new MissingAssets("These required files are missing in the assets folder:\n  " + String.join("\n  ", missing));
+        }
         return a;
+    }
+
+    /** What the menu screens need: the static frames and the menu's photos. */
+    void loadEssentials() throws MissingAssets {
+        String twitch = text("menu.twitch", "diddy").trim();
+        load(k -> k.startsWith("static_"), id -> id.equals("diddy") || id.equals(twitch));
+    }
+
+    /** Everything else (rooms, interface, remaining characters). Safe to run on a background thread. */
+    void loadRest() throws MissingAssets {
+        load(k -> !images.containsKey(k), id -> !characters.containsKey(id));
+    }
+
+    private void load(Predicate<String> imageKeys, Predicate<String> charIds) throws MissingAssets {
+        List<String> broken = new ArrayList<>();
+        for (String k : manifest.stringPropertyNames()) {
+            if (k.startsWith("img.") && imageKeys.test(k.substring(4))) loadImage(k.substring(4), manifest.getProperty(k), broken);
+        }
+        if (!broken.isEmpty()) throw new MissingAssets("These required files could not be read:\n  " + String.join("\n  ", broken));
+        for (String k : manifest.stringPropertyNames()) {
+            if (k.startsWith("char.") && k.endsWith(".file")) {
+                String id = k.substring(5, k.length() - 5);
+                if (charIds.test(id)) characters.put(id, loadCharacter(id));
+            }
+        }
     }
 
     BufferedImage img(String key) {
         BufferedImage b = images.get(key);
-        if (b == null) throw new IllegalStateException("Image key not in manifest: img." + key);
+        if (b == null) throw new IllegalStateException("Image key not in manifest (or not loaded yet): img." + key);
         return b;
     }
 
@@ -167,27 +210,26 @@ final class Assets {
         return placements.values();
     }
 
-    java.util.Set<String> characterIds() {
-        return characters.keySet();
-    }
-
     String text(String key, String fallback) {
         return manifest.getProperty(key, fallback);
     }
 
+    /** Sound names to specs, menu music first so the menu has sound as early as possible. */
     Map<String, String> sounds() {
-        Map<String, String> m = new HashMap<>();
-        for (String k : manifest.stringPropertyNames()) if (k.startsWith("snd.")) m.put(k.substring(4), manifest.getProperty(k));
+        Map<String, String> m = new java.util.LinkedHashMap<>();
+        String menu = manifest.getProperty("snd.menu_music");
+        if (menu != null) m.put("menu_music", menu);
+        for (String k : manifest.stringPropertyNames()) if (k.startsWith("snd.")) m.putIfAbsent(k.substring(4), manifest.getProperty(k));
         return m;
     }
 
     // --- loading ---
 
-    private void loadImage(String key, String spec, List<String> missing) {
+    private void loadImage(String key, String spec, List<String> broken) {
         String[] parts = spec.trim().split("\\s+");
         BufferedImage raw = read(parts[0]);
         if (raw == null) {
-            missing.add(parts[0] + "   (img." + key + ")");
+            broken.add(parts[0] + "   (img." + key + ")");
             return;
         }
         boolean keyed = parts.length > 1 && parts[1].startsWith("key=");
@@ -220,17 +262,22 @@ final class Assets {
         return out;
     }
 
+    /** Backing array of one of our own INT_RGB/INT_ARGB images (used only on images that are never drawn directly). */
+    private static int[] pixels(BufferedImage b) {
+        return ((DataBufferInt) b.getRaster().getDataBuffer()).getData();
+    }
+
     /** Like the original makeColorTransparent(), with an optional tolerance for JPEG-ish edges. */
     private static void colorKey(BufferedImage img, int color, int tol) {
+        int w = img.getWidth(), h = img.getHeight();
+        int[] px = img.getRGB(0, 0, w, h, null, 0, w); // bulk copy keeps the image accelerated for drawing
         int kr = (color >> 16) & 255, kg = (color >> 8) & 255, kb = color & 255;
-        for (int y = 0; y < img.getHeight(); y++) {
-            for (int x = 0; x < img.getWidth(); x++) {
-                int p = img.getRGB(x, y);
-                int d = Math.max(Math.abs(((p >> 16) & 255) - kr),
-                        Math.max(Math.abs(((p >> 8) & 255) - kg), Math.abs((p & 255) - kb)));
-                if (d <= tol) img.setRGB(x, y, p & 0x00FFFFFF);
-            }
+        for (int i = 0; i < px.length; i++) {
+            int p = px[i];
+            int d = Math.max(Math.abs(((p >> 16) & 255) - kr), Math.max(Math.abs(((p >> 8) & 255) - kg), Math.abs((p & 255) - kb)));
+            if (d <= tol) px[i] = p & 0x00FFFFFF;
         }
+        img.setRGB(0, 0, w, h, px, 0, w);
     }
 
     private Cutout loadCharacter(String id) {
@@ -245,43 +292,40 @@ final class Assets {
             return new Cutout(ph, new double[][] {{170, 190}, {250, 190}}, new Rectangle(60, 40, 300, 360), true);
         }
         BufferedImage img = toType(raw, BufferedImage.TYPE_INT_ARGB);
+        int[] px = pixels(img);
         String outline = manifest.getProperty(p + "outline", "").trim();
         if (!outline.isEmpty()) {
-            double[][] pts = parsePoints(outline);
             Polygon poly = new Polygon();
-            for (double[] pt : pts) poly.addPoint((int) pt[0], (int) pt[1]);
+            for (double[] pt : parsePoints(outline)) poly.addPoint((int) pt[0], (int) pt[1]);
             int feather = Integer.parseInt(manifest.getProperty(p + "feather", "8").trim());
-            applyMask(img, poly, feather);
+            applyMask(px, img.getWidth(), img.getHeight(), poly, feather);
         }
         String bgKey = manifest.getProperty(p + "key", "").trim();
         if (!bgKey.isEmpty()) {
             String[] kv = bgKey.split(":");
-            softKey(img, Integer.parseInt(kv[0], 16), Integer.parseInt(kv[1]), Integer.parseInt(kv[2]));
+            softKey(px, Integer.parseInt(kv[0], 16), Integer.parseInt(kv[1]), Integer.parseInt(kv[2]));
         }
-        double[] grade = parseNums(manifest.getProperty(p + "grade", "0.6 0.92 0.96 1.04 0.92"));
-        grade(img, grade[0], grade[1], grade[2], grade[3], grade[4]);
+        double[] g = parseNums(manifest.getProperty(p + "grade", "0.6 0.92 0.96 1.04 0.92"));
+        grade(px, g[0], g[1], g[2], g[3], g[4]);
         if (face == null) face = new Rectangle(0, 0, img.getWidth(), img.getHeight());
         return new Cutout(img, eyes, face, false);
     }
 
     /** Polygon mask with a box-blurred (feathered) edge. Pixels outside the outline become transparent. */
-    private static void applyMask(BufferedImage img, Polygon poly, int feather) {
-        int w = img.getWidth(), h = img.getHeight();
+    private static void applyMask(int[] px, int w, int h, Polygon poly, int feather) {
         BufferedImage m = new BufferedImage(w, h, BufferedImage.TYPE_BYTE_GRAY);
         Graphics2D g = m.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setColor(Color.WHITE);
         g.fillPolygon(poly);
         g.dispose();
+        int[] samples = m.getRaster().getSamples(0, 0, w, h, 0, (int[]) null);
         float[] a = new float[w * h];
-        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) a[y * w + x] = (m.getRGB(x, y) & 255) / 255f;
+        for (int i = 0; i < a.length; i++) a[i] = samples[i] / 255f;
         for (int pass = 0; pass < 3 && feather > 0; pass++) a = boxBlur(a, w, h, feather);
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                int p = img.getRGB(x, y);
-                int alpha = (int) (((p >>> 24) & 255) * a[y * w + x]);
-                img.setRGB(x, y, (alpha << 24) | (p & 0xFFFFFF));
-            }
+        for (int i = 0; i < px.length; i++) {
+            int alpha = (int) (((px[i] >>> 24) & 255) * a[i]);
+            px[i] = (alpha << 24) | (px[i] & 0xFFFFFF);
         }
     }
 
@@ -307,34 +351,27 @@ final class Assets {
     }
 
     /** Removes a flat studio backdrop: alpha ramps from 0 (within lo) to 1 (beyond hi) colour distance. */
-    private static void softKey(BufferedImage img, int color, int lo, int hi) {
+    private static void softKey(int[] px, int color, int lo, int hi) {
         int kr = (color >> 16) & 255, kg = (color >> 8) & 255, kb = color & 255;
-        for (int y = 0; y < img.getHeight(); y++) {
-            for (int x = 0; x < img.getWidth(); x++) {
-                int p = img.getRGB(x, y);
-                double d = Math.sqrt(sq(((p >> 16) & 255) - kr) + sq(((p >> 8) & 255) - kg) + sq((p & 255) - kb));
-                double t = Math.max(0, Math.min(1, (d - lo) / (double) (hi - lo)));
-                int alpha = (int) (((p >>> 24) & 255) * t);
-                img.setRGB(x, y, (alpha << 24) | (p & 0xFFFFFF));
-            }
+        for (int i = 0; i < px.length; i++) {
+            int p = px[i];
+            double d = Math.sqrt(sq(((p >> 16) & 255) - kr) + sq(((p >> 8) & 255) - kg) + sq((p & 255) - kb));
+            double t = Math.max(0, Math.min(1, (d - lo) / (double) (hi - lo)));
+            px[i] = ((int) (((p >>> 24) & 255) * t) << 24) | (p & 0xFFFFFF);
         }
     }
 
     /** Desaturate, tint and flatten contrast so studio photos sit in the dark rendered rooms. */
-    private static void grade(BufferedImage img, double sat, double tr, double tg, double tb, double contrast) {
-        for (int y = 0; y < img.getHeight(); y++) {
-            for (int x = 0; x < img.getWidth(); x++) {
-                int p = img.getRGB(x, y);
-                double r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
-                double l = 0.3 * r + 0.59 * g + 0.11 * b;
-                r = l + (r - l) * sat;
-                g = l + (g - l) * sat;
-                b = l + (b - l) * sat;
-                r = ((r - 128) * contrast + 128) * tr;
-                g = ((g - 128) * contrast + 128) * tg;
-                b = ((b - 128) * contrast + 128) * tb;
-                img.setRGB(x, y, (p & 0xFF000000) | (clamp((int) r) << 16) | (clamp((int) g) << 8) | clamp((int) b));
-            }
+    private static void grade(int[] px, double sat, double tr, double tg, double tb, double contrast) {
+        for (int i = 0; i < px.length; i++) {
+            int p = px[i];
+            if ((p >>> 24) == 0) continue;
+            double r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+            double l = 0.3 * r + 0.59 * g + 0.11 * b;
+            r = ((l + (r - l) * sat - 128) * contrast + 128) * tr;
+            g = ((l + (g - l) * sat - 128) * contrast + 128) * tg;
+            b = ((l + (b - l) * sat - 128) * contrast + 128) * tb;
+            px[i] = (p & 0xFF000000) | (clamp((int) r) << 16) | (clamp((int) g) << 8) | clamp((int) b);
         }
     }
 

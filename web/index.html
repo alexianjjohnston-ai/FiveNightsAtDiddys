@@ -5,13 +5,79 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Five Nights at Diddy's</title>
 <script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script>
-<style>html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }</style>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #game { position: fixed; inset: 0; }
+  #loading {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; justify-content: center; padding-left: 8vw;
+    background: #000; color: #e6e6e6;
+    font: 700 clamp(30px, 6vw, 64px)/1.08 ui-monospace, Menlo, Consolas, monospace;
+    transition: opacity .6s ease;
+  }
+  #loading::after { /* faint scanlines, like the game's camera feed */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,.035) 0 1px, transparent 1px 3px);
+  }
+  #status { margin-top: 1.4em; font-size: clamp(12px, 1.5vw, 17px); font-weight: 400; letter-spacing: .25em; color: #8a8a8a; }
+  #loading.done { opacity: 0; pointer-events: none; }
+  #fullscreen {
+    position: fixed; right: 14px; top: 14px; z-index: 5;
+    font: 600 13px ui-monospace, Menlo, Consolas, monospace; letter-spacing: .08em;
+    color: #ddd; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
+    padding: 7px 11px; cursor: pointer; opacity: 0; transition: opacity .3s ease;
+  }
+  #fullscreen.shown { opacity: 1; }
+  #fullscreen:focus-visible { outline: 2px solid #ddd; opacity: 1; }
+</style>
 </head>
 <body>
+<div id="game"></div>
+<button id="fullscreen" type="button">FULLSCREEN</button>
+<div id="loading" role="status" aria-live="polite">
+  <div>Five<br>Nights<br>at<br>Diddy's</div>
+  <div id="status">LOADING</div>
+</div>
 <script type="module">
-// CheerpJ runs the Swing jar in the browser; /app/ is the web server root, so resolve the jar next to this page.
-await cheerpjInit({ version: 11 });
-cheerpjCreateDisplay(-1, -1, document.body);
+const loading = document.getElementById("loading");
+const status = document.getElementById("status");
+let n = 0;
+const dots = setInterval(() => { status.textContent = "LOADING" + ".".repeat(1 + (n++ % 3)); }, 500);
+let hidden = false;
+function hideLoading() {
+  if (hidden) return;
+  hidden = true;
+  clearInterval(dots);
+  loading.classList.add("done");
+  setTimeout(() => loading.remove(), 700);
+}
+
+// Fullscreen toggle: shows while the mouse moves, fades after two seconds.
+const fs = document.getElementById("fullscreen");
+let fsTimer;
+addEventListener("mousemove", () => {
+  fs.classList.add("shown");
+  clearTimeout(fsTimer);
+  fsTimer = setTimeout(() => fs.classList.remove("shown"), 2000);
+});
+fs.addEventListener("click", () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen?.();
+});
+document.addEventListener("fullscreenchange", () => {
+  fs.textContent = document.fullscreenElement ? "EXIT FULLSCREEN" : "FULLSCREEN";
+});
+
+await cheerpjInit({
+  version: 11,
+  status: "none",                          // no runtime splash or "Loading..." popups; this page has its own
+  javaProperties: ["diddys.web=true"],     // full-window frame, browser saves, no Quit button
+  natives: {
+    async Java_diddys_Main_webReady(lib) { hideLoading(); },  // called once the menu has been drawn
+  },
+});
+cheerpjCreateDisplay(-1, -1, document.getElementById("game"));
+// /app/ is the web server root, so resolve the jar next to this page.
 await cheerpjRunJar("/app" + location.pathname.replace(/[^/]*$/, "") + "FiveNightsAtDiddys.jar");
 </script>
 </body>

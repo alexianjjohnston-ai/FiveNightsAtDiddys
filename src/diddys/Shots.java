@@ -22,7 +22,7 @@ final class Shots {
         Path tmpSave = Files.createTempFile("diddys-shots", ".properties");
         Files.delete(tmpSave);
         game = new Game(assets, Main.silentAudio(), Save.load(tmpSave), true, new Random(1));
-        renderer = new Renderer(assets);
+        renderer = new Renderer(assets).prepare();
     }
 
     static void run(Assets assets, Path dir) {

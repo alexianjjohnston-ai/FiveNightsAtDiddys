@@ -149,6 +149,7 @@ final class Smoke {
                 t.stop();
                 return;
             }
+            if (!game.assetsReady) return; // wait for the background loader before driving the game
             try {
                 steps.remove(0).run();
             } catch (RuntimeException ex) {

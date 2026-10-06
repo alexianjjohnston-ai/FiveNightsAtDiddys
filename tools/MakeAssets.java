@@ -22,7 +22,7 @@ public class MakeAssets {
     }
 
 
-    static final float RATE = 44100f;
+    static final float RATE = 22050f; // matches the rest of the game audio (mono 22 kHz)
 
     static short[] powerDown() {
         int n = (int) (RATE * 1.8);

@@ -14,7 +14,9 @@ import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,18 +40,21 @@ public final class Main {
     public static void main(String[] args) {
         Assets assets;
         try {
-            assets = Assets.load();
+            if (args.length >= 2 && args[0].equals("--shots")) {
+                assets = Assets.load();
+                for (String w : assets.warnings) System.err.println("warning: " + w);
+                Shots.run(assets, Paths.get(args[1]));
+                return;
+            }
+            assets = Assets.open();       // manifest + check every required file exists
+            assets.loadEssentials();      // just what the menu needs; the rest loads in the background
         } catch (Assets.MissingAssets e) {
             fail(e.getMessage());
             return;
         }
-        for (String w : assets.warnings) System.err.println("warning: " + w);
-        if (args.length >= 2 && args[0].equals("--shots")) {
-            Shots.run(assets, Paths.get(args[1]));
-            return;
-        }
         boolean dev = Boolean.getBoolean("diddys.dev");
-        SwingUtilities.invokeLater(() -> start(assets, dev));
+        boolean web = Boolean.getBoolean("diddys.web"); // set by web/index.html when running in the browser
+        SwingUtilities.invokeLater(() -> start(assets, dev, web));
     }
 
     private static void fail(String msg) {
@@ -60,24 +65,34 @@ public final class Main {
         System.exit(1);
     }
 
-    private static void start(Assets assets, boolean dev) {
-        List<String> warnings = new ArrayList<>();
-        Audio audio = new Audio(assets.sounds(), warnings);
-        for (String w : warnings) System.err.println("warning: " + w);
+    private static void start(Assets assets, boolean dev, boolean web) {
+        Audio audio = new Audio();
         String smoke = dev ? System.getProperty("diddys.smoke") : null;
-        Save save = Save.load(smoke != null ? Paths.get(smoke, "save.properties") : Save.defaultPath());
+        // In the browser, /files/ is the runtime's persistent storage, so progress survives a page reload.
+        Path savePath = smoke != null ? Paths.get(smoke, "save.properties")
+                : web ? Paths.get("/files/FiveNightsAtDiddys/save.properties") : Save.defaultPath();
+        Save save = Save.load(savePath);
         Game game = new Game(assets, audio, save, dev, new Random());
+        game.allowQuit = !web;
+        game.assetsReady = false;
         Renderer renderer = new Renderer(assets);
 
         JFrame frame = new JFrame("Five Nights at Diddy's");
-        View view = new View(game, renderer);
+        View view = new View(game, renderer, web);
         frame.setContentPane(view);
-        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-        double fit = Math.min(1, Math.min(screen.width * 0.92 / Config.WIDTH, screen.height * 0.88 / Config.HEIGHT));
-        view.setPreferredSize(new Dimension((int) (Config.WIDTH * fit), (int) (Config.HEIGHT * fit)));
-        frame.pack();
-        frame.setMinimumSize(new Dimension(640, 400));
-        frame.setLocationRelativeTo(null);
+        if (web) {
+            // The page is the window: no title bar, always the size of the browser viewport.
+            frame.setUndecorated(true);
+            fillScreen(frame);
+            new Timer(500, e -> fillScreen(frame)).start();
+        } else {
+            Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+            double fit = Math.min(1, Math.min(screen.width * 0.92 / Config.WIDTH, screen.height * 0.88 / Config.HEIGHT));
+            view.setPreferredSize(new Dimension((int) (Config.WIDTH * fit), (int) (Config.HEIGHT * fit)));
+            frame.pack();
+            frame.setMinimumSize(new Dimension(640, 400));
+            frame.setLocationRelativeTo(null);
+        }
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
 
         Runnable quit = () -> {
@@ -115,7 +130,55 @@ public final class Main {
         timer.setCoalesce(true);
         timer.start();
 
+        startLoader(assets, audio, renderer, game);
         if (smoke != null) Smoke.start(frame, view, game, Paths.get(smoke));
+    }
+
+    /**
+     * Background loading while the menu is up: menu music, then rooms/characters/signs (after which a
+     * night can start), then the remaining sounds, which plug in as they finish.
+     */
+    private static void startLoader(Assets assets, Audio audio, Renderer renderer, Game game) {
+        Thread loader = new Thread(() -> {
+            Map<String, String> sounds = assets.sounds();
+            Map<String, String> first = new HashMap<>();
+            if (sounds.containsKey("menu_music")) first.put("menu_music", sounds.remove("menu_music"));
+            audio.loadAll(first, assets.warnings);
+            try {
+                assets.loadRest();
+                renderer.prepare();
+            } catch (Assets.MissingAssets e) {
+                SwingUtilities.invokeLater(() -> fail(e.getMessage()));
+                return;
+            } catch (RuntimeException e) {
+                SwingUtilities.invokeLater(() -> fail("The game's files could not be loaded: " + e));
+                return;
+            }
+            SwingUtilities.invokeLater(() -> game.assetsReady = true);
+            audio.loadAll(sounds, assets.warnings);
+            for (String w : assets.warnings) System.err.println("warning: " + w);
+        }, "asset-loader");
+        loader.setDaemon(true);
+        loader.start();
+    }
+
+    private static void fillScreen(JFrame frame) {
+        Dimension d = Toolkit.getDefaultToolkit().getScreenSize();
+        if (frame.getX() != 0 || frame.getY() != 0 || !frame.getSize().equals(d)) {
+            frame.setBounds(0, 0, d.width, d.height);
+            frame.validate();
+        }
+    }
+
+    /** Implemented in web/index.html: hides the page's loading screen once the menu has been drawn. */
+    private static native void webReady();
+
+    private static void signalWebReady() {
+        try {
+            webReady();
+        } catch (Throwable t) {
+            // page without the hook (or not in a browser): nothing to hide
+        }
     }
 
     /** Letterboxed view: the 1280x720 frame is scaled to fit, bars fill the rest, input is mapped back. */
@@ -125,9 +188,13 @@ public final class Main {
         private final BufferedImage frame = new BufferedImage(Config.WIDTH, Config.HEIGHT, BufferedImage.TYPE_INT_RGB);
         private double scale = 1, ox, oy;
 
-        View(Game game, Renderer renderer) {
+        private final boolean web;
+        private boolean announced;
+
+        View(Game game, Renderer renderer, boolean web) {
             this.game = game;
             this.renderer = renderer;
+            this.web = web;
             setBackground(Color.BLACK);
             setFocusable(true);
             setFocusTraversalKeysEnabled(false);
@@ -170,11 +237,15 @@ public final class Main {
             Graphics2D g = (Graphics2D) g0;
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g.drawImage(frame, (int) ox, (int) oy, w, h, null);
+            if (web && !announced) {
+                announced = true;
+                SwingUtilities.invokeLater(Main::signalWebReady);
+            }
         }
     }
 
     /** Audio stand-in for tools and tests: loads nothing, plays nothing. */
     static Audio silentAudio() {
-        return new Audio(new HashMap<>(), new ArrayList<>());
+        return new Audio();
     }
 }

@@ -11,13 +11,13 @@ You need **Java 11 or newer**. This Mac has Java 11.0.31.
 | What | Command |
 |---|---|
 | Play the packaged game | `java -jar dist/FiveNightsAtDiddys.jar` |
-| Build the JAR | `./build.sh` (creates `dist/FiveNightsAtDiddys.jar`, ~49 MB, code and assets included) |
+| Build the JAR | `./build.sh` (creates `dist/FiveNightsAtDiddys.jar`, ~16 MB, code and assets included) |
 | Run from source (reads `assets/` directly, good while swapping art) | `./run.sh` |
 | Run the rule checks | `./test.sh` |
 
 The JAR is a normal Java application, not a standalone native app: it needs a Java runtime installed. It works offline and needs no accounts or network access.
 
-**In the browser:** every push to `main` runs `.github/workflows/pages.yml`, which runs the checks, builds the JAR and publishes it with `web/index.html` to GitHub Pages. The page runs the JAR through [CheerpJ](https://cheerpj.com) (free for personal, non-commercial use). CheerpJ can't decode JPEGs with an embedded color profile, so save new art as plain sRGB with no profile.
+**In the browser:** every push to `main` runs `.github/workflows/pages.yml`, which runs the checks, builds the JAR and publishes it with `web/index.html` to GitHub Pages. The page runs the JAR through [CheerpJ](https://cheerpj.com) (free for personal, non-commercial use; its small licence notice stays). The game fills the browser window, shows its own loading screen until the menu is drawn, saves progress in the browser, and has a fullscreen button that appears when the mouse moves. To keep it loading quickly, the menu's assets load first and everything else loads in the background. Sounds are mono 22 kHz WAV and the rooms are JPEG; run `java tools/OptimizeAssets.java assets` after adding art. CheerpJ can't decode JPEGs with an embedded colour profile, so that tool also re-saves JPEGs as plain sRGB.
 
 **Platform support:** built and tested on **macOS only** (this Mac). The code is plain Java/Swing with no native parts, so it should run on Windows and Linux with Java 11+, but that hasn't been tested.
 

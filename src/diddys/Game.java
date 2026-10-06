@@ -39,6 +39,8 @@ final class Game {
     final boolean dev;
     final Random rng;
     Runnable onQuit = () -> System.exit(0);
+    boolean allowQuit = true;               // false in the browser, where quitting would leave a blank page
+    volatile boolean assetsReady = true;    // Main clears this while the background loader runs
 
     Screen screen = Screen.MENU;
     int screenTicks;
@@ -135,7 +137,7 @@ final class Game {
 
         switch (screen) {
             case INTRO:
-                if (screenTicks >= Config.INTRO_TICKS) beginPlay();
+                if (screenTicks >= Config.INTRO_TICKS && assetsReady) beginPlay();
                 break;
             case PLAYING:
                 tickPlaying();
@@ -253,7 +255,7 @@ final class Game {
             return;
         }
         if (screen == Screen.INTRO) {
-            if (screenTicks > 100) beginPlay();
+            if (screenTicks > 100 && assetsReady) beginPlay();
             return;
         }
         for (Button b : buttons()) {
@@ -333,7 +335,7 @@ final class Game {
                 if (code == KeyEvent.VK_ESCAPE) resume();
                 break;
             case INTRO:
-                if ((code == KeyEvent.VK_SPACE || code == KeyEvent.VK_ENTER) && screenTicks > 100) beginPlay();
+                if ((code == KeyEvent.VK_SPACE || code == KeyEvent.VK_ENTER) && screenTicks > 100 && assetsReady) beginPlay();
                 break;
             case CONTROLS: case SETTINGS: case NIGHT_SELECT: case CONFIRM_NEW:
                 if (code == KeyEvent.VK_ESCAPE) go(Screen.MENU);
@@ -367,7 +369,7 @@ final class Game {
                 b.add(new Button("Continue", x, y += 52, w, h, save.started, () -> go(Screen.NIGHT_SELECT)));
                 b.add(new Button("Controls", x, y += 52, w, h, true, () -> go(Screen.CONTROLS)));
                 b.add(new Button("Settings", x, y += 52, w, h, true, () -> go(Screen.SETTINGS)));
-                b.add(new Button("Quit", x, y + 52, w, h, true, () -> onQuit.run()));
+                if (allowQuit) b.add(new Button("Quit", x, y + 52, w, h, true, () -> onQuit.run()));
                 break;
             }
             case CONFIRM_NEW:
