@@ -48,6 +48,7 @@ function hideLoading() {
   if (hidden) return;
   hidden = true;
   clearInterval(dots);
+  console.log("Five Nights at Diddy's: menu ready after " + (performance.now() / 1000).toFixed(1) + " s");
   loading.classList.add("done");
   setTimeout(() => loading.remove(), 700);
 }
@@ -68,8 +69,18 @@ document.addEventListener("fullscreenchange", () => {
   fs.textContent = document.fullscreenElement ? "EXIT FULLSCREEN" : "FULLSCREEN";
 });
 
+// If startup stalls (e.g. a network hiccup while the runtime downloads), say so instead of spinning forever.
+setTimeout(() => {
+  if (!hidden) { clearInterval(dots); status.textContent = "STILL LOADING. IF THIS LOOKS STUCK, RELOAD THE PAGE."; }
+}, 120000);
+
+// Runtime files the game needs before the menu, fetched in parallel up front
+// (captured with cjGetRuntimeResources() after a full load; regenerate if the game's Java version changes).
+const preloadResources = {"/lt/11/lib/modules":[0,131072,1441792,4063232,4194304,4718592,4849664,5636096,5767168,6160384,6291456,6946816,7602176,8126464,9175040,9437184,9699328,9961472,19398656,20054016,20185088,23592960,24641536,25034752,25690112,26214400,26345472,27131904,27262976,27394048,41156608,41287680,43253760,43384832],"/lt/etc/users":[0,131072],"/lt/etc/localtime":[],"/lt/11/jre/lib/cheerpj-handlers.jar":[0,131072],"/lt/11/jre/lib/cheerpj-awt.jar":[0,131072],"/lt/11/jre/lib/cheerpj-jsobject.jar":[0,131072],"/lt/11/conf/security/java.security":[0,131072],"/lt/11/conf/accessibility.properties":[],"/lt/11/conf/swing.properties":[],"/lt/11/conf/sound.properties":[0,131072],"/lt/11/lib/fonts/badfonts.txt":[],"/lt/11/lib/fonts":[],"/lt/11/lib/fonts/fallback":[],"/lt/fc/fonts/fonts.conf":[0,131072],"/lt/fc/ttf":[],"/lt/fc/cache/e21edda6a7db77f35ca341e0c3cb2a22-le32d8.cache-7":[0,131072],"/lt/fc/ttf/NotoSansMono-Bold.ttf":[0,131072,393216,524288]};
+
 await cheerpjInit({
   version: 11,
+  preloadResources,
   status: "none",                          // no runtime splash or "Loading..." popups; this page has its own
   javaProperties: ["diddys.web=true"],     // full-window frame, browser saves, no Quit button
   natives: {
