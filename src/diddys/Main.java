@@ -122,7 +122,7 @@ public final class Main {
                 game.tick();
                 acc[0] -= TICK_NS;
             }
-            if (now - lastPaint[0] >= 15_000_000L) {
+            if (now - lastPaint[0] >= (web ? 33_000_000L : 15_000_000L)) { // browser: 30 fps leaves time for the game clock
                 lastPaint[0] = now;
                 view.repaint();
             }
@@ -195,6 +195,7 @@ public final class Main {
             this.game = game;
             this.renderer = renderer;
             this.web = web;
+            if (web) javax.swing.RepaintManager.currentManager(this).setDoubleBufferingEnabled(false);
             setBackground(Color.BLACK);
             setFocusable(true);
             setFocusTraversalKeysEnabled(false);
@@ -227,16 +228,27 @@ public final class Main {
         @Override
         protected void paintComponent(Graphics g0) {
             super.paintComponent(g0);
-            Graphics2D fg = frame.createGraphics();
-            renderer.render(fg, game);
-            fg.dispose();
             scale = Math.min(getWidth() / (double) Config.WIDTH, getHeight() / (double) Config.HEIGHT);
             int w = (int) Math.round(Config.WIDTH * scale), h = (int) Math.round(Config.HEIGHT * scale);
             ox = (getWidth() - w) / 2.0;
             oy = (getHeight() - h) / 2.0;
-            Graphics2D g = (Graphics2D) g0;
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(frame, (int) ox, (int) oy, w, h, null);
+            if (web) {
+                // Browser: draw straight onto the page canvas, scaled, so the browser's own graphics do the
+                // work. Building a full frame in a Java image first was far too slow there.
+                Graphics2D g = (Graphics2D) g0.create();
+                g.translate(ox, oy);
+                g.scale(scale, scale);
+                g.clipRect(0, 0, Config.WIDTH, Config.HEIGHT);
+                renderer.render(g, game);
+                g.dispose();
+            } else {
+                Graphics2D fg = frame.createGraphics();
+                renderer.render(fg, game);
+                fg.dispose();
+                Graphics2D g = (Graphics2D) g0;
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.drawImage(frame, (int) ox, (int) oy, w, h, null);
+            }
             if (web && !announced) {
                 announced = true;
                 SwingUtilities.invokeLater(Main::signalWebReady);

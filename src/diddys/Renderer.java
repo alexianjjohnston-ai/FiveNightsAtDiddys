@@ -31,7 +31,7 @@ final class Renderer {
     private static final String[] CHAR_ID = {"jayz", "biggie", "diddy", "kanye"}; // indexed by Sim.Role
 
     private final Assets a;
-    private final BufferedImage scanlines, vignette;
+    private final BufferedImage scanlines, vignette, camOverlay;
     private final BufferedImage[] statics = new BufferedImage[8];
     private final Map<String, List<Assets.Sign>> signsByRoom = new HashMap<>();
     private final Map<Assets.Sign, BufferedImage> signArt = new HashMap<>();
@@ -42,6 +42,7 @@ final class Renderer {
         for (int i = 0; i < 8; i++) statics[i] = a.img("static_" + (i + 1));
         scanlines = makeScanlines();
         vignette = makeVignette();
+        camOverlay = makeCamOverlay();
     }
 
     /** Draws the signs and pre-builds every cutout, so gameplay never processes images. Any thread. */
@@ -156,12 +157,10 @@ final class Renderer {
         if (cam == Cam.WEST_HALL_A && s.kanyeStage == 3) sprint(g, s, off);
         else room(g, cam, s, off);
 
-        // Camera feed treatment: tint, noise, scanlines, vignette. Light enough to keep rooms readable.
-        g.setColor(CAM_TINT);
-        g.fillRect(0, 0, W, H);
+        // Camera feed treatment: noise, then tint + scanlines + vignette pre-combined into one layer
+        // (one full-screen blend instead of three matters a lot in the browser build).
         fullStatic(g, s.ticks, 0.09f);
-        g.drawImage(scanlines, 0, 0, null);
-        g.drawImage(vignette, 0, 0, null);
+        g.drawImage(camOverlay, 0, 0, null);
 
         g.setFont(F_SMALL);
         g.setColor(Color.WHITE);
@@ -685,6 +684,17 @@ final class Renderer {
         Graphics2D g = b.createGraphics();
         g.setColor(new Color(0, 0, 0, 55));
         for (int y = 0; y < H; y += 3) g.drawLine(0, y, W, y);
+        g.dispose();
+        return b;
+    }
+
+    private BufferedImage makeCamOverlay() {
+        BufferedImage b = new BufferedImage(W, H, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = b.createGraphics();
+        g.setColor(CAM_TINT);
+        g.fillRect(0, 0, W, H);
+        g.drawImage(scanlines, 0, 0, null);
+        g.drawImage(vignette, 0, 0, null);
         g.dispose();
         return b;
     }
