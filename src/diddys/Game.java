@@ -45,7 +45,7 @@ final class Game {
     Sim sim;
     int night = 1;
     int mouseX = -1, mouseY = -1;
-    boolean barArmed;
+    boolean barArmed, barArmedPrev;
     int camSwitchFlash;
     String caption;
     int captionTicks;
@@ -53,13 +53,6 @@ final class Game {
     boolean deathAudioDone;
     String loseLine = "";
     int menuTwitch;
-
-    private static final String[] LOSE_LINES = {
-            "You've been signed. Permanently.",
-            "Security has been dropped from the label.",
-            "That's a wrap. On you.",
-            "Your contract has been terminated.",
-    };
 
     Game(Assets assets, Audio audio, Save save, boolean dev, Random rng) {
         this.assets = assets;
@@ -179,7 +172,7 @@ final class Game {
             }
         }
         if (sim.defeatReady()) {
-            loseLine = LOSE_LINES[rng.nextInt(LOSE_LINES.length)];
+            loseLine = randomLoseLine();
             go(Screen.DEFEAT);
         } else if (sim.won) {
             if (night >= Config.NIGHTS) save.completed = true;
@@ -187,6 +180,13 @@ final class Game {
             save.write();
             go(Screen.VICTORY);
         }
+    }
+
+    /** Game Over lines come from the manifest (text.lose.1, text.lose.2, ...). */
+    private String randomLoseLine() {
+        List<String> lines = new ArrayList<>();
+        for (int i = 1; !assets.text("text.lose." + i, "").isEmpty(); i++) lines.add(assets.text("text.lose." + i, ""));
+        return lines.isEmpty() ? "" : lines.get(rng.nextInt(lines.size()));
     }
 
     private void onEvent(Sim.Event e) {
@@ -240,7 +240,6 @@ final class Game {
         barArmedPrev = inBar;
     }
 
-    private boolean barArmedPrev;
 
     void mouseExited() {
         mouseX = mouseY = -1;

@@ -9,6 +9,7 @@ import java.util.Set;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
+import javax.sound.sampled.DataLine;
 import javax.sound.sampled.FloatControl;
 
 /**
@@ -31,7 +32,7 @@ final class Audio {
                     continue;
                 }
                 AudioInputStream in = AudioSystem.getAudioInputStream(new BufferedInputStream(raw));
-                Clip c = AudioSystem.getClip();
+                Clip c = (Clip) AudioSystem.getLine(new DataLine.Info(Clip.class, in.getFormat()));
                 c.open(in);
                 clips.put(e.getKey(), c);
                 baseGain.put(e.getKey(), parts.length > 1 ? Float.parseFloat(parts[1]) : 0f);

@@ -95,12 +95,30 @@ final class Assets {
         boolean glow, flip;
         int z;
         final List<Rectangle> occluders = new ArrayList<>();
+
+        Placement copy() {
+            Placement q = new Placement();
+            q.who = who; q.x = x; q.y = y; q.h = h; q.bright = bright; q.alpha = alpha; q.rot = rot;
+            q.fade = fade; q.shade = shade; q.crop = crop; q.glow = glow; q.flip = flip; q.z = z;
+            q.occluders.addAll(occluders);
+            return q;
+        }
+    }
+
+    /** A sign, poster or banner drawn onto a room (see "sign." in the manifest). */
+    static final class Sign {
+        String room, style;
+        Rectangle r;
+        double rot, bright = 1;
+        String[] faces = new String[0];
+        String[] lines;
     }
 
     private final Properties manifest = new Properties();
     private final Map<String, BufferedImage> images = new HashMap<>();
     private final Map<String, Cutout> characters = new HashMap<>();
     private final Map<String, Placement> placements = new HashMap<>();
+    final List<Sign> signs = new ArrayList<>();
     final List<String> warnings = new ArrayList<>();
 
     static Assets load() throws MissingAssets {
@@ -125,7 +143,9 @@ final class Assets {
                 a.characters.put(id, a.loadCharacter(id));
             }
             if (k.startsWith("place.")) a.placements.put(k.substring(6), a.parsePlacement(k, a.manifest.getProperty(k)));
+            if (k.startsWith("sign.")) a.signs.add(a.parseSign(k, a.manifest.getProperty(k)));
         }
+        a.signs.removeIf(x -> x == null);
         return a;
     }
 
@@ -141,6 +161,14 @@ final class Assets {
 
     Placement placement(String key) {
         return placements.get(key);
+    }
+
+    java.util.Collection<Placement> placements() {
+        return placements.values();
+    }
+
+    java.util.Set<String> characterIds() {
+        return characters.keySet();
     }
 
     String text(String key, String fallback) {
@@ -359,6 +387,29 @@ final class Assets {
             }
         }
         return pl;
+    }
+
+    /** sign.N = room x y w h rot style [b=brightness] [faces=id,id] | line | line ... */
+    private Sign parseSign(String key, String spec) {
+        String[] parts = spec.split("\\|");
+        String[] head = parts[0].trim().split("\\s+");
+        if (head.length < 7) {
+            warnings.add(key + ": needs 'room x y w h rot style | text'");
+            return null;
+        }
+        Sign sg = new Sign();
+        sg.room = head[0];
+        sg.r = new Rectangle(Integer.parseInt(head[1]), Integer.parseInt(head[2]), Integer.parseInt(head[3]), Integer.parseInt(head[4]));
+        sg.rot = Double.parseDouble(head[5]);
+        sg.style = head[6];
+        for (int i = 7; i < head.length; i++) {
+            if (head[i].startsWith("b=")) sg.bright = Double.parseDouble(head[i].substring(2));
+            else if (head[i].startsWith("faces=")) sg.faces = head[i].substring(6).split(",");
+            else warnings.add(key + ": unknown option '" + head[i] + "'");
+        }
+        sg.lines = new String[parts.length - 1];
+        for (int i = 1; i < parts.length; i++) sg.lines[i - 1] = parts[i].trim();
+        return sg;
     }
 
     private static Rectangle parseRect(String s) {

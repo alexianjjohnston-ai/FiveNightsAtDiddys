@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Five Nights at Diddy's</title>
+<script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script>
+<style>html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }</style>
+</head>
+<body>
+<script type="module">
+// CheerpJ runs the Swing jar in the browser; /app/ is the web server root, so resolve the jar next to this page.
+await cheerpjInit({ version: 11 });
+cheerpjCreateDisplay(-1, -1, document.body);
+await cheerpjRunJar("/app" + location.pathname.replace(/[^/]*$/, "") + "FiveNightsAtDiddys.jar");
+</script>
+</body>
+</html>

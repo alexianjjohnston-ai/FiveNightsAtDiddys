@@ -16,8 +16,9 @@ import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Random;
+import java.util.Map;
 
 /** Draws the current screen into the 1280x720 virtual frame. Reads game state; never changes it. */
 final class Renderer {
@@ -30,16 +31,46 @@ final class Renderer {
     private static final String[] CHAR_ID = {"jayz", "biggie", "diddy", "kanye"}; // indexed by Sim.Role
 
     private final Assets a;
-    private final BufferedImage scanlines, vignette, poster;
+    private final BufferedImage scanlines, vignette;
     private final BufferedImage[] statics = new BufferedImage[8];
-    private final Random fx = new Random();
+    private final Map<String, List<Assets.Sign>> signsByRoom = new HashMap<>();
+    private final Map<Assets.Sign, BufferedImage> signArt = new HashMap<>();
 
     Renderer(Assets a) {
         this.a = a;
         for (int i = 0; i < 8; i++) statics[i] = a.img("static_" + (i + 1));
         scanlines = makeScanlines();
         vignette = makeVignette();
-        poster = makePoster();
+        for (Assets.Sign sg : a.signs) {
+            signsByRoom.computeIfAbsent(sg.room, k -> new ArrayList<>()).add(sg);
+            signArt.put(sg, renderSign(sg));
+        }
+        warmCutouts();
+    }
+
+    /** Builds every cutout variant up front so the first sighting or jumpscare never stalls a frame. */
+    private void warmCutouts() {
+        BufferedImage scratch = new BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = scratch.createGraphics();
+        for (Assets.Placement p : a.placements()) drawPlacement(g, p, 0);
+        for (String id : CHAR_ID) {
+            Assets.Placement p = jumpscarePose(id);
+            p.bright = 0.55; drawPlacement(g, p, 0);
+            p.bright = 1.1; drawPlacement(g, p, 0);
+        }
+        g.dispose();
+    }
+
+    /** Which photo a character's jumpscare uses: manifest "jumpscare.<id>", default the main photo. */
+    private Assets.Placement jumpscarePose(String id) {
+        Assets.Placement pl = new Assets.Placement();
+        pl.who = a.text("jumpscare." + id, id).trim();
+        if (a.character(pl.who) == null) pl.who = id;
+        pl.crop = a.character(pl.who).face;
+        pl.fade = 0.18;
+        pl.shade = 0.25;
+        pl.glow = true;
+        return pl;
     }
 
     void render(Graphics2D g, Game game) {
@@ -96,12 +127,9 @@ final class Renderer {
             BufferedImage r = a.img("office_light_right");
             g.drawImage(r, 800, 0, 1600, H, 800, 0, 1600, H, null);
         }
-        Rectangle pr = rect(a.text("office.poster", "530 132 248 223"));
-        g.drawImage(poster, pr.x, pr.y, pr.width, pr.height, null);
-        g.setColor(new Color(0, 0, 0, s.leftLight || s.rightLight ? 70 : 110)); // match the dim office lamp
-        g.fillRect(pr.x, pr.y, pr.width, pr.height);
-        if (s.leftLight && s.jay == 8) place(g, "office.jayz", base, 0, s.ticks);
-        if (s.rightLight && s.big == 8) place(g, "office.biggie", s.leftLight ? a.img("office_light_right") : base, 0, s.ticks);
+        drawSigns(g, "office");
+        if (s.leftLight && s.jay == 8) place(g, "office.jayz", "office", base, s.ticks);
+        if (s.rightLight && s.big == 8) place(g, "office.biggie", "office", s.leftLight ? a.img("office_light_right") : base, s.ticks);
         if (!s.leftDoorOpen) g.drawImage(a.img("door_left"), 80, 0, null);
         if (!s.rightDoorOpen) g.drawImage(a.img("door_right"), 1270, 0, null);
         g.drawImage(a.img(panel("left", !s.leftDoorOpen, s.leftLight)), Game.LEFT_PANEL_X, Game.PANEL_Y, null);
@@ -219,8 +247,9 @@ final class Renderer {
         AffineTransform t = g.getTransform();
         g.translate(off, 0);
         g.drawImage(bgImg, 0, 0, null);
+        drawSigns(g, bg);
         slots.sort(Comparator.comparingInt(k -> a.placement(k) == null ? 0 : a.placement(k).z));
-        for (String k : slots) place(g, k, bgImg, 0, s.ticks);
+        for (String k : slots) place(g, k, bg, bgImg, s.ticks);
         g.setTransform(t);
     }
 
@@ -248,12 +277,17 @@ final class Renderer {
         g.setTransform(tr);
     }
 
-    private void place(Graphics2D g, String key, BufferedImage bg, int off, int ticks) {
+    /** Draws a placement, then repaints its occluder rectangles (room art plus signs) in front of it. */
+    private void place(Graphics2D g, String key, String room, BufferedImage bg, int ticks) {
         Assets.Placement p = a.placement(key);
         if (p == null) return;
         drawPlacement(g, p, ticks);
+        java.awt.Shape clip = g.getClip();
         for (Rectangle r : p.occluders) {
             g.drawImage(bg, r.x, r.y, r.x + r.width, r.y + r.height, r.x, r.y, r.x + r.width, r.y + r.height, null);
+            g.clip(r);
+            drawSigns(g, room);
+            g.setClip(clip);
         }
     }
 
@@ -304,7 +338,6 @@ final class Renderer {
         g.setColor(new Color(0, 0, 0, 150));
         g.fillRect(0, 0, W, H);
 
-        Assets.Cutout c = a.character(CHAR_ID[s.jumpscare.ordinal()]);
         int len = Sim.jumpscareLength(s.jumpscare);
         double p = s.jumpTicks / (double) len;
         double grow = Math.min(1, p / 0.22);
@@ -312,17 +345,12 @@ final class Renderer {
         double amp = calm ? 4 : 18;
         double dx = Math.sin(s.ticks * 2.3) * amp * grow, dy = Math.cos(s.ticks * 3.1) * amp * 0.6 * grow;
         boolean flicker = !calm && (s.jumpTicks / 3) % 4 == 3;
-        Assets.Placement pl = new Assets.Placement();
-        pl.who = CHAR_ID[s.jumpscare.ordinal()];
-        pl.crop = c.face;
+        Assets.Placement pl = jumpscarePose(CHAR_ID[s.jumpscare.ordinal()]);
         pl.h = h;
         pl.x = W / 2.0 + dx;
         pl.y = H / 2.0 + h / 2 + dy + h * 0.06;
         pl.bright = flicker ? 0.55 : 1.1;
-        pl.fade = 0.18;
-        pl.shade = 0.25;
         pl.rot = Math.sin(s.ticks * 0.9) * (calm ? 1 : 4);
-        pl.glow = true;
         drawPlacement(g, pl, s.ticks);
         if (!calm && s.jumpTicks < 6) {
             g.setColor(new Color(180, 0, 0, 90));
@@ -340,7 +368,7 @@ final class Renderer {
         boolean on = game.save.reducedFlash || (s.deathTicks / 8) % 2 == 0;
         Assets.Placement p = a.placement("office.diddy_dark");
         if (p != null) {
-            Assets.Placement q = copy(p);
+            Assets.Placement q = p.copy();
             q.glow = on;
             q.bright = on ? p.bright : p.bright * 0.5;
             drawPlacement(g, q, s.ticks);
@@ -396,7 +424,8 @@ final class Renderer {
     private void menu(Graphics2D g, Game game) {
         boolean twitch = game.menuTwitch > 0 && !game.save.reducedFlash;
         Assets.Placement p = new Assets.Placement();
-        p.who = "diddy";
+        String twitchId = a.text("menu.twitch", "diddy").trim();
+        p.who = twitch && a.character(twitchId) != null ? twitchId : "diddy";
         p.h = 760;
         p.x = 930 + (twitch ? 14 : 0);
         p.y = 760;
@@ -478,6 +507,8 @@ final class Renderer {
         } else {
             center(g, F_BIG, "12:00 AM", 330, Color.WHITE);
             center(g, F_MED, ordinal(game.night) + " Night", 385, Color.WHITE);
+            String session = a.text("text.intro." + game.night, "");
+            if (!session.isEmpty()) center(g, F_SMALL, session, 440, new Color(190, 170, 120));
         }
         g.setComposite(c);
         fullStatic(g, t, 0.06f);
@@ -554,7 +585,7 @@ final class Renderer {
         g.setClip(oldClip);
         g.drawString(am, x0 + digitW, baseY);
         if (t > 300) {
-            String line = game.night >= Config.NIGHTS ? "That's the whole week. Payday." : "Good job, intern. See you tomorrow night.";
+            String line = a.text("text.win." + game.night, "Good job, intern. See you tomorrow night.");
             center(g, F_SMALL, line, 420, new Color(210, 210, 210));
         }
         buttons(g, game);
@@ -582,7 +613,7 @@ final class Renderer {
         g.setFont(F_SMALL);
         g.drawString("Pay to the order of:  Night Security", 270, 400);
         g.drawString("Amount:  $120.50", 270, 440);
-        g.drawString("Memo:  five nights, zero royalties", 270, 480);
+        g.drawString("Memo:  " + a.text("text.paycheck.memo", "five nights, zero royalties"), 270, 480);
         g.setFont(new Font(Font.SERIF, Font.ITALIC, 30));
         g.drawString("THE END", 780, 560);
         buttons(g, game);
@@ -639,18 +670,6 @@ final class Renderer {
         return Math.round(v * 100) / 100.0;
     }
 
-    private static Assets.Placement copy(Assets.Placement p) {
-        Assets.Placement q = new Assets.Placement();
-        q.who = p.who; q.x = p.x; q.y = p.y; q.h = p.h; q.bright = p.bright; q.alpha = p.alpha;
-        q.rot = p.rot; q.fade = p.fade; q.shade = p.shade; q.crop = p.crop; q.glow = p.glow; q.flip = p.flip; q.z = p.z;
-        return q;
-    }
-
-    private static Rectangle rect(String s) {
-        String[] p = s.trim().split("\\s+");
-        return new Rectangle(Integer.parseInt(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2]), Integer.parseInt(p[3]));
-    }
-
     private static BufferedImage makeScanlines() {
         BufferedImage b = new BufferedImage(W, H, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = b.createGraphics();
@@ -670,51 +689,157 @@ final class Renderer {
         return b;
     }
 
-    /** The venue's own poster, hung over the original office poster: the four acts under the studio name. */
-    private BufferedImage makePoster() {
-        int w = 330, h = 300;
+    // --- signs, posters and banners (manifest "sign.") ---
+
+    private void drawSigns(Graphics2D g, String room) {
+        List<Assets.Sign> list = signsByRoom.get(room);
+        if (list == null) return;
+        for (Assets.Sign sg : list) {
+            AffineTransform t = g.getTransform();
+            g.translate(sg.r.getCenterX(), sg.r.getCenterY());
+            g.rotate(Math.toRadians(sg.rot));
+            g.drawImage(signArt.get(sg), -sg.r.width / 2, -sg.r.height / 2, sg.r.width, sg.r.height, null);
+            g.setTransform(t);
+        }
+    }
+
+    /** Draws a sign once at 2x its placed size; brightness is baked in so it matches the room. */
+    private BufferedImage renderSign(Assets.Sign sg) {
+        int w = sg.r.width * 2, h = sg.r.height * 2;
         BufferedImage b = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = b.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g.setPaint(new GradientPaint(0, 0, new Color(84, 16, 18), 0, h, new Color(20, 5, 7)));
-        g.fillRect(0, 0, w, h);
-        String[] acts = {"jayz", "biggie", "kanye", "diddy"}; // drawn back to front; Diddy centre stage
-        double[] xs = {62, 268, 205, 128};
-        double[] hs = {150, 150, 150, 175};
-        for (int i = 0; i < acts.length; i++) {
-            Assets.Cutout c = a.character(acts[i]);
-            if (c == null) continue;
-            Assets.Placement p = new Assets.Placement();
-            p.who = acts[i];
-            p.crop = c.face;
-            p.h = hs[i];
-            p.x = xs[i];
-            p.y = 245;
-            p.fade = 0.25;
-            p.shade = 0.2;
-            drawPlacement(g, p, 0);
+        String[] L = sg.lines;
+        switch (sg.style) {
+            case "board": {
+                g.setColor(new Color(226, 222, 210));
+                g.fillRoundRect(0, 0, w, h, 10, 10);
+                g.setColor(new Color(40, 36, 34));
+                g.setStroke(new BasicStroke(4));
+                g.drawRoundRect(2, 2, w - 4, h - 4, 10, 10);
+                textBlock(g, L, w, h, Font.SANS_SERIF, true);
+                break;
+            }
+            case "paper": {
+                g.setColor(new Color(222, 216, 196));
+                g.fillRect(0, 0, w, h);
+                g.setColor(new Color(36, 30, 28));
+                int y = (int) (h * 0.16);
+                fitText(g, L.length > 0 ? L[0] : "", Font.SERIF, Font.BOLD, w * 0.9, h * 0.13, w / 2, y, true);
+                for (int i = 1; i < L.length; i++) {
+                    y += (int) (h * 0.8 / Math.max(6, L.length));
+                    fitText(g, L[i], Font.SANS_SERIF, Font.PLAIN, w * 0.88, h * 0.075, (int) (w * 0.06), y, false);
+                }
+                break;
+            }
+            case "plaque_gold":
+            case "plaque_platinum": { // framed award record: disc above an engraved plate (title | artist | label)
+                boolean gold = sg.style.endsWith("gold");
+                g.setColor(new Color(46, 30, 20));
+                g.fillRect(0, 0, w, h);
+                g.setColor(new Color(12, 10, 10));
+                int m = (int) (w * 0.08);
+                g.fillRect(m, m, w - 2 * m, h - 2 * m);
+                double d = (w - 2 * m) * 0.84;
+                double cx = w / 2.0, cy = m + d / 2 + w * 0.06;
+                Color rim = gold ? new Color(230, 190, 90) : new Color(222, 224, 230);
+                Color deep = gold ? new Color(120, 86, 24) : new Color(110, 112, 120);
+                g.setPaint(new RadialGradientPaint(new Point2D.Double(cx - d * 0.15, cy - d * 0.2), (float) d,
+                        new float[] {0f, 0.6f, 1f}, new Color[] {rim.brighter(), rim, deep}));
+                g.fill(new java.awt.geom.Ellipse2D.Double(cx - d / 2, cy - d / 2, d, d));
+                g.setColor(new Color(0, 0, 0, 40));
+                for (double r = d * 0.2; r < d / 2; r += d * 0.035) g.draw(new java.awt.geom.Ellipse2D.Double(cx - r, cy - r, 2 * r, 2 * r));
+                g.setColor(new Color(20, 14, 12));
+                g.fill(new java.awt.geom.Ellipse2D.Double(cx - d * 0.16, cy - d * 0.16, d * 0.32, d * 0.32));
+                g.setColor(rim);
+                g.fill(new java.awt.geom.Ellipse2D.Double(cx - d * 0.03, cy - d * 0.03, d * 0.06, d * 0.06));
+                int plateY = (int) (cy + d / 2 + w * 0.06), plateH = h - m - plateY - (int) (w * 0.04);
+                g.setColor(new Color(176, 150, 96));
+                g.fillRect((int) (w * 0.18), plateY, (int) (w * 0.64), plateH);
+                g.setColor(new Color(36, 26, 14));
+                for (int i = 0; i < L.length && i < 3; i++) {
+                    double lh = plateH / 3.4;
+                    fitText(g, L[i], Font.SERIF, i == 0 ? Font.BOLD : Font.PLAIN, w * 0.58, lh * (i == 0 ? 0.95 : 0.55),
+                            w / 2, (int) (plateY + lh * (i + 0.95)), true);
+                }
+                break;
+            }
+            case "banner": {
+                g.setPaint(new GradientPaint(0, 0, new Color(96, 14, 18), 0, h, new Color(40, 6, 8)));
+                g.fillRect(0, 0, w, (int) (h * 0.82));
+                for (int x = 0; x < w; x += 18) g.fillPolygon(new int[] {x, x + 18, x + 9}, new int[] {(int) (h * 0.82), (int) (h * 0.82), h}, 3);
+                g.setColor(new Color(226, 190, 96));
+                fitText(g, L.length > 0 ? L[0] : "", Font.SERIF, Font.BOLD, w * 0.92, h * 0.42, w / 2, (int) (h * 0.48), true);
+                if (L.length > 1) fitText(g, L[1], Font.SANS_SERIF, Font.BOLD, w * 0.8, h * 0.18, w / 2, (int) (h * 0.72), true);
+                break;
+            }
+            default: { // poster: title, subtitle, faces, tagline, small print
+                g.setPaint(new GradientPaint(0, 0, new Color(84, 16, 18), 0, h, new Color(20, 5, 7)));
+                g.fillRect(0, 0, w, h);
+                // First face is the headliner (centre, larger, drawn last); the rest fan out to either side.
+                int n = sg.faces.length;
+                double step = n == 2 ? 0.2 : 0.36 / Math.max(1, Math.ceil((n - 1) / 2.0));
+                for (int k = n - 1; k >= 0; k--) {
+                    Assets.Cutout c = a.character(sg.faces[k]);
+                    if (c == null) continue;
+                    double x = n == 2 ? 0.5 + (k == 0 ? -step : step)
+                            : k == 0 ? 0.5 : 0.5 + ((k - 1) % 2 == 0 ? -1 : 1) * ((k - 1) / 2 + 1) * step;
+                    Assets.Placement fp = new Assets.Placement();
+                    fp.who = sg.faces[k];
+                    fp.crop = c.face;
+                    fp.h = h * (k == 0 && n > 2 ? 0.58 : 0.5);
+                    fp.x = w * x;
+                    fp.y = h * 0.82;
+                    fp.fade = 0.25;
+                    fp.shade = 0.2;
+                    drawPlacement(g, fp, 0);
+                }
+                g.setColor(new Color(226, 190, 96));
+                if (L.length > 0) fitText(g, L[0], Font.SERIF, Font.BOLD, w * 0.92, h * 0.17, w / 2, (int) (h * 0.18), true);
+                if (L.length > 1) fitText(g, L[1], Font.SANS_SERIF, Font.BOLD, w * 0.8, h * 0.06, w / 2, (int) (h * 0.26), true);
+                g.setColor(new Color(244, 234, 214));
+                if (L.length > 2) fitText(g, L[2], Font.SANS_SERIF, Font.BOLD, w * 0.9, h * 0.095, w / 2, (int) (h * 0.915), true);
+                if (L.length > 3) fitText(g, L[3], Font.SANS_SERIF, Font.PLAIN, w * 0.9, h * 0.045, w / 2, (int) (h * 0.975), true);
+                g.setColor(new Color(0, 0, 0, 130));
+                g.setStroke(new BasicStroke(6));
+                g.drawRect(3, 3, w - 6, h - 6);
+                break;
+            }
         }
-        g.setColor(new Color(226, 190, 96));
-        g.setFont(new Font(Font.SERIF, Font.BOLD, 52));
-        FontMetrics fm = g.getFontMetrics();
-        g.drawString("DIDDY'S", (w - fm.stringWidth("DIDDY'S")) / 2, 54);
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 17));
-        fm = g.getFontMetrics();
-        g.drawString("PLATINUM STUDIOS", (w - fm.stringWidth("PLATINUM STUDIOS")) / 2, 78);
-        g.setColor(new Color(244, 234, 214));
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 28));
-        fm = g.getFontMetrics();
-        g.drawString("LIVE 'TIL 6 AM", (w - fm.stringWidth("LIVE 'TIL 6 AM")) / 2, 274);
-        g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 13));
-        fm = g.getFontMetrics();
-        String sm = "no refunds  -  no sampling  -  no exits";
-        g.drawString(sm, (w - fm.stringWidth(sm)) / 2, 293);
-        g.setColor(new Color(0, 0, 0, 130));
-        g.setStroke(new BasicStroke(6));
-        g.drawRect(3, 3, w - 6, h - 6);
         g.dispose();
+        if (sg.bright < 1) {
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+                int px = b.getRGB(x, y);
+                int r = (int) (((px >> 16) & 255) * sg.bright), gg = (int) (((px >> 8) & 255) * sg.bright), bl = (int) ((px & 255) * sg.bright);
+                b.setRGB(x, y, (px & 0xFF000000) | (r << 16) | (gg << 8) | bl);
+            }
+        }
         return b;
+    }
+
+    /** Centred lines filling a board, all at the largest size that fits. */
+    private static void textBlock(Graphics2D g, String[] lines, int w, int h, String family, boolean bold) {
+        if (lines.length == 0) return;
+        double lineH = h * 0.78 / lines.length;
+        for (int i = 0; i < lines.length; i++) {
+            int y = (int) (h * 0.11 + lineH * (i + 0.78));
+            fitText(g, lines[i], family, bold ? Font.BOLD : Font.PLAIN, w * 0.88, lineH * 0.82, w / 2, y, true);
+        }
+    }
+
+    /** Draws text at up to maxH tall, shrinking until it fits maxW. */
+    private static void fitText(Graphics2D g, String text, String family, int style, double maxW, double maxH, int x, int y, boolean centred) {
+        int size = Math.max(6, (int) (maxH * 1.25));
+        Font f = new Font(family, style, size);
+        FontMetrics fm = g.getFontMetrics(f);
+        while (size > 6 && (fm.stringWidth(text) > maxW || fm.getAscent() > maxH * 1.1)) {
+            size--;
+            f = new Font(family, style, size);
+            fm = g.getFontMetrics(f);
+        }
+        g.setFont(f);
+        g.drawString(text, centred ? x - fm.stringWidth(text) / 2 : x, y);
     }
 }

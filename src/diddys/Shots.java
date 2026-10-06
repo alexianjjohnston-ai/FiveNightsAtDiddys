@@ -143,6 +143,19 @@ final class Shots {
         shot("64_paused");
         game.go(Game.Screen.NIGHT_SELECT);
         shot("65_night_select");
+        cam("70_sign_west_corner", Cam.WEST_HALL_B, x -> {});
+        cam("71_sign_east_corner", Cam.EAST_HALL_B, x -> {});
+        cam("72_sign_lounge", Cam.DINING_AREA, x -> { x.jay = 3; x.big = 3; });
+        cam("73_sign_restrooms", Cam.RESTROOMS, x -> {});
+        cam("74_sign_green_room", Cam.BACKSTAGE, x -> {});
+        game.night = 3;
+        game.go(Game.Screen.INTRO);
+        game.screenTicks = 250;
+        shot("75_intro_night3");
+        game.night = 2;
+        game.go(Game.Screen.VICTORY);
+        game.screenTicks = 400;
+        shot("76_victory_night2");
         System.out.println("Wrote shots to " + dir.toAbsolutePath());
     }
 }

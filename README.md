@@ -17,6 +17,8 @@ You need **Java 11 or newer**. This Mac has Java 11.0.31.
 
 The JAR is a normal Java application, not a standalone native app: it needs a Java runtime installed. It works offline and needs no accounts or network access.
 
+**In the browser:** every push to `main` runs `.github/workflows/pages.yml`, which runs the checks, builds the JAR and publishes it with `web/index.html` to GitHub Pages. The page runs the JAR through [CheerpJ](https://cheerpj.com) (free for personal, non-commercial use). CheerpJ can't decode JPEGs with an embedded color profile, so save new art as plain sRGB with no profile.
+
 **Platform support:** built and tested on **macOS only** (this Mac). The code is plain Java/Swing with no native parts, so it should run on Windows and Linux with Java 11+, but that hasn't been tested.
 
 ## Controls
